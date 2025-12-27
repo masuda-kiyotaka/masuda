@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ぷよぷよ</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: #f5f5f5;
+            margin: 0;
+            font-family: "Arial", sans-serif;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+
+        canvas {
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <h1>ぷよぷよゲーム</h1>
+    <h2 id="score">Score: 0</h2>
+    <canvas id="game" width="320" height="640"></canvas>
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        const blockSize = 32;
+
+        const boardWidth = 10;
+        const boardHeight = 20;
+        const board = new Array(boardHeight).fill(0).map(() => new Array(boardWidth).fill(0));
+
+        const puyoColors = ['#FF0000', '#0000FF', '#00FF00', '#FFFF00', '#800080'];
+
+        class Puyo {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x * blockSize, this.y * blockSize, blockSize, blockSize);
+            }
+        }
+
+        function generatePuyoPair() {
+            const mainPuyo = new Puyo(4, 0, puyoColors[Math.floor(Math.random() * puyoColors.length)]);
+            const subPuyo = new Puyo(5, 0, puyoColors[Math.floor(Math.random() * puyoColors.length)]);
+            return [mainPuyo, subPuyo];
+        }
+
+        let currentPuyoPair = generatePuyoPair();
+        let nextPuyoPair = generatePuyoPair();
+        let dropInterval = 1000;
+        let lastDropTime = Date.now();
+        let score = 0;
+        const scoreElement = document.getElementById('score');
+        let scoreThreshold = 100;
+        let dropIntervalDecrease = 0.9;
+
+        // 速度を30秒ごとに増加させる
+        setInterval(() => {
+            dropInterval *= 0.98;  // 2%ずつ速度を速める
+        }, 30000);  // 30秒ごとに速度を増加させる
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp') {
+                rotatePuyoPair();
+            } else if (e.key === 'ArrowRight') {
+                movePuyoPair(1, 0);
+            } else if (e.key === 'ArrowLeft') {
+                movePuyoPair(-1, 0);
+            } else if (e.key === 'ArrowDown') {
+                movePuyoPair(0, 1);
+            }
+        });
+
+        function movePuyoPair(deltaX, deltaY) {
+            const newX = currentPuyoPair.map((puyo) => puyo.x + deltaX);
+            const newY = currentPuyoPair.map((puyo) => puyo.y + deltaY);
+
+            if (isMoveValid(newX, newY)) {
+                for (let i = 0; i < currentPuyoPair.length; i++) {
+                    currentPuyoPair[i].x += deltaX;
+                    currentPuyoPair[i].y += deltaY;
+                }
+            } else if (deltaY === 1) {
+                lockPuyoPair();
+                currentPuyoPair = nextPuyoPair;
+                nextPuyoPair = generatePuyoPair();
+            }
+        }
+
+        function rotatePuyoPair() {
+            const mainPuyo = currentPuyoPair[0];
+            const subPuyo = currentPuyoPair[1];
+            const offsetX = subPuyo.x - mainPuyo.x;
+            const offsetY = subPuyo.y - mainPuyo.y;
+            const newX = mainPuyo.x - offsetY;
+            const newY = mainPuyo.y + offsetX;
+
+            if (isMoveValid([newX], [newY])) {
+                subPuyo.x = newX;
+                subPuyo.y = newY;
+            }
+        }
+
+        function isMoveValid(newX, newY) {
+            for (let i = 0; i < newX.length; i++) {
+                if (newX[i] < 0 || newX[i] >= boardWidth || newY[i] < 0 || newY[i] >= boardHeight || board[newY[i]][newX[i]] !== 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function lockPuyoPair() {
+            for (const puyo of currentPuyoPair) {
+                if (puyo.y < 0) {
+                    alert('Game Over');
+                    location.reload();
+                    return;
+                }
+                board[puyo.y][puyo.x] = puyo.color;
+            }
+            applyGravity();
+            checkChains();
+        }
+
+        function applyGravity() {
+            for (let x = 0; x < boardWidth; x++) {
+                let emptyY = -1;
+                for (let y = boardHeight - 1; y >= 0; y--) {
+                    if (board[y][x] === 0) {
+                        if (emptyY === -1) {
+                            emptyY = y;
+                        }
+                    } else if (emptyY !== -1) {
+                        board[emptyY][x] = board[y][x];
+                        board[y][x] = 0;
+                        emptyY--;
+                    }
+                }
+            }
+            checkChains();
+        }
+
+        function checkChains() {
+            let chains = [];
+            for (let y = 0; y < boardHeight; y++) {
+                for (let x = 0; x < boardWidth; x++) {
+                    const color = board[y][x];
+                    if (color === 0) continue;
+                    const chain = checkPuyoChain(x, y, color, []);
+                    if (chain.length >= 4) {
+                        chains.push(chain);
+                    }
+                }
+            }
+
+            if (chains.length > 0) {
+                removeChains(chains);
+                applyGravity();
+                checkChains();
+            }
+        }
+
+        function checkPuyoChain(x, y, color, visited) {
+            if (x < 0 || x >= boardWidth || y < 0 || y >= boardHeight || board[y][x] !== color || visited.some(([vx, vy]) => vx === x && vy === y)) {
+                return [];
+            }
+
+            visited.push([x, y]);
+            let chain = [[x, y]];
+
+            const directions = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+            for (const [dx, dy] of directions) {
+                chain = chain.concat(checkPuyoChain(x + dx, y + dy, color, visited));
+            }
+
+            return chain;
+        }
+
+        function removeChains(chains) {
+            for (const chain of chains) {
+                for (const [x, y] of chain) {
+                    board[y][x] = 0;
+                    score += 10;
+                }
+            }
+            scoreElement.textContent = `Score: ${score}`;
+            updateDropInterval();
+        }
+
+        function updateDropInterval() {
+            if (score >= scoreThreshold) {
+                dropInterval *= dropIntervalDecrease;
+                scoreThreshold *= 2;
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let y = 0; y < boardHeight; y++) {
+                for (let x = 0; x < boardWidth; x++) {
+                    const color = board[y][x];
+                    if (color !== 0) {
+                        ctx.fillStyle = color;
+                        ctx.fillRect(x * blockSize, y * blockSize, blockSize, blockSize);
+                    }
+                }
+            }
+
+            for (const puyo of currentPuyoPair) {
+                puyo.draw();
+            }
+        }
+
+        function update() {
+            if (Date.now() - lastDropTime > dropInterval) {
+                movePuyoPair(0, 1);
+                lastDropTime = Date.now();
+            }
+
+            draw();
+            requestAnimationFrame(update);
+        }
+
+        update();
+    </script>
+</body>
+</html>
